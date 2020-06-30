@@ -1,195 +1,242 @@
 import os
 import pandas as pd
 import numpy as np
-from pandas.api.types import is_numeric_dtype
 from pathlib import Path
 
 class Simulator:
     def __init__(self):
+        
         self.sample_submission = pd.read_csv(os.path.join(Path(__file__).resolve().parent, 'sample_submission.csv'))
         self.max_count = pd.read_csv(os.path.join(Path(__file__).resolve().parent, 'max_count.csv'))
         self.stock = pd.read_csv(os.path.join(Path(__file__).resolve().parent, 'stock.csv'))
-        order = pd.read_csv(os.path.join(Path(__file__).resolve().parent, 'order.csv'), index_col=0)   
-        order.index = pd.to_datetime(order.index)
-        self.order = order
+        self.order = pd.read_csv(os.path.join(Path(__file__).resolve().parent, 'order.csv'))   
         
-    def get_state(self, data):
-        if 'CHECK' in data:
-            return int(data[-1])
-        elif 'CHANGE' in data:
-            return int(data[-1])
-        else:
-            return np.nan   
+        cut = {f'BLK_{i}': 506 if i <= 2 else 400 for i in range(1,5) }
         
-    def cal_schedule_part_1(self, df):
-        columns = ['PRT_1', 'PRT_2', 'PRT_3', 'PRT_4']
-        df_set = df[columns]
-        df_out = df_set * 0
-        
-        p = 0.985
-        dt = pd.Timedelta(days=23)
-        end_time = df_out.index[-1]
+        ratio = {}
 
-        for time in df_out.index:
-            out_time = time + dt
-            if end_time < out_time:
-                break
-            else:            
-                for column in columns:
-                    set_num = df_set.loc[time, column]
-                    if set_num > 0:
-                        out_num = np.sum(np.random.choice(2, set_num, p=[1-p, p]))         
-                        df_out.loc[out_time, column] = out_num
+        ratio['BLK_1'] = {}
+        ratio['BLK_1'][4] = 0.851
+        ratio['BLK_1'][5] = 0.851
+        ratio['BLK_1'][6] = 0.851
 
-        df_out['MOL_1'] = 0.0
-        df_out['MOL_2'] = 0.0
-        df_out['MOL_3'] = 0.0
-        df_out['MOL_4'] = 0.0
-        df_out['BLK_1'] = 0.0
-        df_out['BLK_2'] = 0.0
-        df_out['BLK_3'] = 0.0
-        df_out['BLK_4'] = 0.0
-        return df_out    
-    
-    def cal_schedule_part_2(self, df, line='A'):
-        if line == 'A':
-            columns = ['Event_A', 'MOL_A']
-        elif line == 'B':
-            columns = ['Event_B', 'MOL_B']
-        else:
-            columns = ['Event_A', 'MOL_A']
+        ratio['BLK_2'] = {}
+        ratio['BLK_2'][4] = 0.901
+        ratio['BLK_2'][5] = 0.901
+        ratio['BLK_2'][6] = 0.901
+
+        ratio['BLK_3'] = {}
+        ratio['BLK_3'][4] = 0.710
+        ratio['BLK_3'][5] = 0.742
+        ratio['BLK_3'][6] = 0.759
+
+        ratio['BLK_4'] = {}
+        ratio['BLK_4'][4] = 0.700
+        ratio['BLK_4'][5] = 0.732
+        ratio['BLK_4'][6] = 0.749
+        
+        self.cut = cut
+        self.ratio = ratio
+        
+        order_dic = { }
+        order = self.order
+
+        for time, BLK_1, BLK_2, BLK_3, BLK_4 in zip(order['time'],order['BLK_1'],order['BLK_2'],order['BLK_3'],order['BLK_4']):
+
+            order_count_time = str(pd.to_datetime(time) + pd.Timedelta(hours=18))
+            order_dic[order_count_time] = {}
+
+            order_dic[order_count_time][1] = BLK_1
+            order_dic[order_count_time][2] = BLK_2
+            order_dic[order_count_time][3] = BLK_3
+            order_dic[order_count_time][4] = BLK_4
             
-        schedule = df[columns].copy()
+        self.order_dic = order_dic
         
-        schedule['state'] = 0
-        schedule['state'] = schedule[columns[0]].apply(lambda x: self.get_state(x))
-        schedule['state'] = schedule['state'].fillna(method='ffill')
-        schedule['state'] = schedule['state'].fillna(0)
+    def make_init(self):
         
-        schedule_process = schedule.loc[schedule[columns[0]]=='PROCESS']
-        df_out = schedule.drop(schedule.columns, axis=1)
-        df_out['PRT_1'] = 0.0
-        df_out['PRT_2'] = 0.0
-        df_out['PRT_3'] = 0.0
-        df_out['PRT_4'] = 0.0
-        df_out['MOL_1'] = 0.0
-        df_out['MOL_2'] = 0.0
-        df_out['MOL_3'] = 0.0
-        df_out['MOL_4'] = 0.0
+        PRT_dic = {time : {i : 0 for i in range(1,5)} for time in self.sample_submission['time']}
+        MOL_dic = {time : {i : 0 for i in range(1,5)} for time in self.sample_submission['time']}
+        BLK_dic = {time : {i : 0 for i in range(1,5)} for time in self.sample_submission['time']}
 
-        p = 0.975
-        times = schedule_process.index
-        for i, time in enumerate(times):
-            value = schedule.loc[time, columns[1]]
-            state = int(schedule.loc[time, 'state'])
-            df_out.loc[time, 'PRT_'+str(state)] = -value
-            if i+48 < len(times):
-                out_time = times[i+48]
-                df_out.loc[out_time, 'MOL_'+str(state)] = value*p
+        ## 4/1일 00:00:00에 기초재고를 추가 
+        for i in range(1,5):
+            PRT_dic['2020-04-01 00:00:00'][i] = int(self.stock[f'PRT_{i}'])
+            MOL_dic['2020-04-01 00:00:00'][i] = int(self.stock[f'MOL_{i}'])
+            BLK_dic['2020-04-01 00:00:00'][i] = int(self.stock[f'BLK_{i}'])
+            
+        self.PRT_dic = PRT_dic
+        self.MOL_dic = MOL_dic
+        self.BLK_dic = BLK_dic
 
-        df_out['BLK_1'] = 0.0
-        df_out['BLK_2'] = 0.0
-        df_out['BLK_3'] = 0.0
-        df_out['BLK_4'] = 0.0
-        return df_out
+        
+    def cal_prt_mol(self,machine_name):
+        
+        df = self.df
 
-    def cal_stock(self, df, df_order):
-        df_stock = df * 0
+        ## PRT 개수와 MOL 개수 구하기 
+        process_list = []
+        for time, event, mol in zip(self.sample_submission['time'],df[f'Event_{machine_name}'],df[f'MOL_{machine_name}']):
 
-        blk2mol = {}
-        blk2mol['BLK_1'] = 'MOL_1'
-        blk2mol['BLK_2'] = 'MOL_2'
-        blk2mol['BLK_3'] = 'MOL_3'
-        blk2mol['BLK_4'] = 'MOL_4'
+            ## check한 몰의 개수만큼 PRT로 
+            try:
+                val = int(event[-1])
+            except:
+                pass
 
-        cut = {}
-        cut['BLK_1'] = 506
-        cut['BLK_2'] = 506
-        cut['BLK_3'] = 400
-        cut['BLK_4'] = 400
+            if event == 'PROCESS':
+                process_list.append((time,mol,val))
 
-        p = {}
-        p['BLK_1'] = 0.851
-        p['BLK_2'] = 0.901
+            self.PRT_dic[time][val] += -mol
+
+        for p_start, p_end in zip(process_list[:-48],process_list[48:]):
+
+            p_start_time, p_start_mol, p_start_number = p_start
+            p_end_time, p_end_mol, p_end_number = p_end
+
+            self.MOL_dic[p_end_time][p_start_number] += p_start_mol * 0.975
+            
+            
+    def cal_blk(self):
+        
+        PRT_dic = self.PRT_dic    
+        MOL_dic = self.MOL_dic
+        BLK_dic = self.BLK_dic
+        order_dic = self.order_dic
+        ratio = self.ratio
+        cut = self.cut
+        
+        PRT_stock_dic = {time : {i : 0 for i in range(1,5)} for time in self.sample_submission['time']}
+        MOL_stock_dic = {time : {i : 0 for i in range(1,5)} for time in self.sample_submission['time']}
+        BLK_stock_dic = {time : {i : 0 for i in range(1,5)} for time in self.sample_submission['time']}
+        
         blk_diffs = []
-        for i, time in enumerate(df.index):
-            month = time.month
-            if month == 4:
-                p['BLK_3'] = 0.710
-                p['BLK_4'] = 0.700        
-            elif month == 5:
-                p['BLK_3'] = 0.742
-                p['BLK_4'] = 0.732
-            elif month == 6:
-                p['BLK_3'] = 0.759
-                p['BLK_4'] = 0.749
-            else:
-                p['BLK_3'] = 0.0
-                p['BLK_4'] = 0.0
-                
-            if i == 0:
-                df_stock.iloc[i] = df.iloc[i]    
-            else:
-                df_stock.iloc[i] = df_stock.iloc[i-1] + df.iloc[i]
-                for column in df_order.columns:
-                    val = df_order.loc[time, column]
-                    if val > 0:
-                        mol_col = blk2mol[column]
-                        mol_num = df_stock.loc[time, mol_col]
-                        df_stock.loc[time, mol_col] = 0     
-                        
-                        blk_gen = int(mol_num*p[column]*cut[column])
-                        blk_stock = df_stock.loc[time, column] + blk_gen
-                        blk_diff = blk_stock - val
-                        
-                        df_stock.loc[time, column] = blk_diff
-                        blk_diffs.append(blk_diff)
-        return df_stock, blk_diffs    
+        previous_time = [self.sample_submission['time'][0]] + list(self.sample_submission['time'])
 
-    def subprocess(self, df):
-        out = df.copy()
-        column = 'time'
+        for time, previous in zip(self.sample_submission['time'], previous_time[:-1]):
 
-        out.index = pd.to_datetime(out[column])
-        out = out.drop([column], axis=1)
-        out.index.name = column
-        return out
+            month = int(time[6])
+
+            for i in range(1,5):
+
+                if str(time) == '2020-04-01 00:00:00':
+                    PRT_stock_dic[time][i] = PRT_dic[time][i]
+                    MOL_stock_dic[time][i] = MOL_dic[time][i]
+                    BLK_stock_dic[time][i] = BLK_dic[time][i]
+                    
+                else:
+                    PRT_stock_dic[time][i] = PRT_stock_dic[previous][i] + PRT_dic[time][i]
+                    MOL_stock_dic[time][i] = MOL_stock_dic[previous][i] + MOL_dic[time][i]
+                    BLK_stock_dic[time][i] = BLK_stock_dic[previous][i] + BLK_dic[time][i]
+
+                    if int(time[11:13]) == 18:
+
+                        val = order_dic[time][i]
+
+                        if val > 0 :
+                            mol_number = i
+                            mol = MOL_stock_dic[time][i]
+                            MOL_stock_dic[time][i] = 0
+
+                            blk_gen = int(mol*ratio[f'BLK_{i}'][month]*cut[f'BLK_{i}'])
+                            blk_stock = BLK_stock_dic[time][i] + blk_gen
+                            blk_diff = blk_stock - val
+
+                            BLK_stock_dic[time][i] = blk_diff
+                            blk_diffs.append(blk_diff)
+                            
+        self.PRT_stock_dic = PRT_stock_dic
+        self.MOL_stock_dic = MOL_stock_dic
+        self.BLK_stock_dic = BLK_stock_dic
+        self.blk_diffs = blk_diffs
+        
+    def F(self, x, a): return 1 - x/a if x < a else 0
     
-    def add_stock(self, df, df_stock):
-        df_out = df.copy()
-        for column in df_out.columns:
-            df_out.iloc[0][column] = df_out.iloc[0][column] + df_stock.iloc[0][column]
-        return df_out
+    def cal_change_stop_time(self):
+        
+        df = self.df
+        
+        change_type = {'A':'', 'B':''}
+        change_num = 0
+        change_time = 0
+        stop_num = 0
+        stop_time = 0
+        previous_event = {'A':'', 'B':''}
+        for row in df.iterrows():
+            for machine in ['A', 'B']:
+                if 'CHANGE' in row[1][f'Event_{machine}']:
+                    change_time += 1
+                    if change_type[machine] != row[1][f'Event_{machine}'][-2:]:
+                        change_num += 1
+                        change_type[machine] = row[1][f'Event_{machine}'][-2:]
 
-    def order_rescale(self, df, df_order):
-        df_rescale = df.drop(df.columns, axis=1)
-        dt = pd.Timedelta(hours=18)
-        for column in ['BLK_1', 'BLK_2', 'BLK_3', 'BLK_4']:
-            for time in df_order.index:
-                df_rescale.loc[time+dt, column] = df_order.loc[time, column]
-        df_rescale = df_rescale.fillna(0)
-        return df_rescale
+                if 'STOP' == row[1][f'Event_{machine}']:
+                    stop_time += 1
+                    if previous_event[machine] != 'STOP':
+                        stop_num += 1
 
-    def cal_score(self, blk_diffs):
-        # Block Order Difference
-        blk_diff_m = 0
-        blk_diff_p = 0
-        for item in blk_diffs:
+                previous_event[machine] = row[1][f'Event_{machine}']
+        return change_time, change_num, stop_time, stop_num
+        
+    def cal_score(self):
+        
+        p = 0
+        q = 0
+        for item in self.blk_diffs:
             if item < 0:
-                blk_diff_m = blk_diff_m + abs(item)
+                p = p + abs(item)
             if item > 0:
-                blk_diff_p = blk_diff_p + abs(item)
-        score = blk_diff_m + blk_diff_p
-        return score
-    
-    def get_score(self, df):
-        df = self.subprocess(df) 
-        out_1 = self.cal_schedule_part_1(df)
-        out_2 = self.cal_schedule_part_2(df, line='A')
-        out_3 = self.cal_schedule_part_2(df, line='B')
-        out = out_1 + out_2 + out_3
-        out = self.add_stock(out, self.stock)
-        order = self.order_rescale(out, self.order)                    
-        out, blk_diffs = self.cal_stock(out, order)                    
-        score = self.cal_score(blk_diffs) 
-        return score, out
+                q = q + abs(item)
+
+        N = sum([sum(self.order[f'BLK_{i}']) for i in range(1,5)])
+        M = len(self.df) * 2
+        
+        c, c_n, s, s_n = self.cal_change_stop_time()
+        
+        self.score = 50*self.F(p, 10*N)+20*self.F(q, 10*N)+\
+                20*self.F(c, M)/(1+0.1*c_n) + 10*self.F(s, M)/(1 + 0.1*s_n)
+        
+        self.p = p
+        self.q = q
+        self.N = N
+        self.M = M
+        self.c = c
+        self.c_n = c_n
+        self.s = s
+        self.s_n = s_n
+        
+    def make_stock_df(self):
+        
+        PRT_l = {i : [] for i in range(1,5)}
+        MOL_l = {i : [] for i in range(1,5)}
+        BLK_l = {i : [] for i in range(1,5)}
+
+        for time in self.sample_submission['time']:
+            for i in range(1,5):
+                PRT_l[i].append(self.PRT_stock_dic[time][i])
+                MOL_l[i].append(self.MOL_stock_dic[time][i])
+                BLK_l[i].append(self.BLK_stock_dic[time][i])
+                
+                
+        df_stock = pd.DataFrame(index = self.sample_submission['time'])
+
+        for i in range(1,5):
+            df_stock[f'PRT_{i}'] = PRT_l[i]
+        for i in range(1,5):
+            df_stock[f'MOL_{i}'] = MOL_l[i]
+        for i in range(1,5):
+            df_stock[f'BLK_{i}'] = BLK_l[i]
+            
+        self.df_stock = df_stock             
+                
+    def get_score(self,df):
+        
+        self.df = df.copy()
+        self.make_init()
+        self.cal_prt_mol('A')
+        self.cal_prt_mol('B')
+        self.cal_blk()
+        self.cal_score()
+        self.make_stock_df()
+        
+        return self.score, self.df_stock
